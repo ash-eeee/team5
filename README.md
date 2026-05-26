@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # TransitFlow — Intelligent Rail Assistant
 hahahahaha
 > **Course starter project** — your job is to build the databases that power this AI assistant.
@@ -1347,3 +1348,6 @@ python skeleton/seed_vectors.py
 - Any locally generated data exports or dump files.
 
 Before pushing, run `git status` and `git diff --staged` to confirm you are only committing files from `databases/`.
+=======
+# team5
+>>>>>>> fc701511553ee7a2f6cd142a6572c2a48ebd24c2
