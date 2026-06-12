@@ -52,9 +52,9 @@ All members must sum to 100%.
 
 | Member | Estimated % | Brief justification |
 |--------|-----------|---------------------|
-| 陳少畇 | % | 負責最初的relational, graph兩個的queries的架構，後續也幫忙檢測schema內容及seed_postgres.py的內容，也有小小更動neo4j的變數|
-| 陳佑瑄 | % | 負責圖形資料庫，seed.cypher, see_neo4j.py, Authentication queries、部分的graph/queries.py，也協助修改 schema.sql, relational/queries.py, seed_postgre.py。|
-| 姚喬嫚 | % | 負責初期Relational schema design, PostgreSQL seeding的架構設計，後續debug schema, seed_postgres.py和relational queries的內容。|
+| 陳少畇 | 33.3% | 主導 relational queries（queries.py）與 Neo4j 查詢函數（graph/queries.py）的初期架構設計；後續審查 schema.sql 的正確性與主鍵設計合規性、檢查 seed_postgres.py 的冪等性與 argon2id 整合，並針對 graph/queries.py 中的變數引用進行修正|
+| 陳佑瑄 | 33.3% | 負責圖形資料庫，seed.cypher, see_neo4j.py, Authentication queries、部分的graph/queries.py，也協助修改 schema.sql, relational/queries.py, seed_postgre.py。|
+| 姚喬嫚 | 33.3% | 負責初期Relational schema design, PostgreSQL seeding的架構設計，後續debug schema, seed_postgres.py和relational queries的內容。|
 | **Total** | **100%** | |
 
 ---

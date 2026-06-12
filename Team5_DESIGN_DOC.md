@@ -177,72 +177,54 @@ RAG 流程分成四個連續階段來回答使用者的問題：
 
 ## Section 5 — AI Tool Usage Evidence · /10
 
-**1.**
-**Context :**
-在執行資料庫初始化與灌錄腳本（seed_postgres.py）時，終端機反覆回傳 psycopg2.OperationalError: Connection refused 的連線錯誤。小組初期判斷為連線埠號（Port）或本機網路故障，在反覆修改埠號參數後仍無法順利解開連線死結。
+**Example 1 — Schema Design: Password Storage Architecture**
+**Context**
+>During schema design, we needed to decide how to store user passwords securely. The initial design stored passwords in the registered_users table as plain text, which would score 0 marks according to the project rubric. We also needed to confirm whether credentials should be isolated into a separate table.
+**Prompt**
+>"我密碼要用 argon2id 的方式 salt 所以告訴我要在哪裡更改我的程式碼，把所有密碼問題解決。我的密碼一定要存另外的表不可以跟 user 存在一起要分開。"
+**Outcome**
+>The AI identified four specific locations requiring modification: the import block in queries.py, register_user(), login_user(), and update_password(). It explained that argon2id embeds the salt directly inside the PHC-format hash string, so no separate salt column is needed — the salt column in user_credentials was repurposed to record the algorithm name for auditability. The AI also clarified that login_user() cannot use a SQL WHERE password_hash = %s comparison because argon2id produces non-deterministic hashes; the hash must be fetched first and verified in Python via _ph.verify(). The seed_postgres.py file also required updating so that mock passwords are hashed before insertion. All changes were applied and verified to work correctly.
 
-**Prompt :**
+**Example 2 — Debugging: AI Error on Polymorphic Foreign Key Constraint**
+**Context**
+>During seeding of the payments and feedback tables, the script raised a ForeignKeyViolation error: Key (booking_id)=(MT001) is not present in table "bookings". The mock data in payments.json is polymorphic — it contains both national rail booking references (BK-) and metro trip references (MT-). The original schema had booking_id as NOT NULL with a single FK to the bookings table, making it incompatible with metro payment records.
+**Prompt (correction prompt after AI gave wrong output)**
+>"沒有成功耶，一樣是沒有顯示 not null。妳給的語法有問題，因為原本的表有 NOT NULL 限制，而且妳完全漏掉了 seed_postgres.py 裡面一開始連 seed_users 和 seed_metro_travels 都沒被執行到的 Bug！請幫我把 booking_id 的 NOT NULL 移除，並將 trip_id 設為外鍵關聯至地鐵歷史表，最後加上一個兩者互斥、剛好只能有一個來源為真的 CHECK 約束！"
+**Outcome**
+>The AI's initial suggestion was to run ALTER TABLE payments ADD COLUMN trip_id ... directly in the terminal without accounting for the existing NOT NULL constraint on booking_id, and without recognising that seed_users and seed_metro_travels had not yet been executed. After our correction, the AI produced the proper solution: dropping the NOT NULL constraint on booking_id, adding trip_id as a nullable FK to metro_travel_history, and implementing a mutual-exclusivity check constraint — CONSTRAINT chk_payments_single_source CHECK ((booking_id IS NOT NULL)::int + (trip_id IS NOT NULL)::int = 1) — to enforce that every payment record belongs to exactly one source. This constraint was retained in the final schema.
 
-「我的一直跑出個問題（Connection refused），但所以就算我要改 port num 我要去哪裡改才能變正確的？還是是我 localhost 的問題？... 一樣跑出這樣的資訊 到底為什麼？」
+**Example 3 — Query Implementation: execute_booking Atomicity**
+**Context**
+>After reviewing the project rubric, we found that execute_booking() was only committing the booking insert, with no payment insert in the same transaction. The rubric explicitly states that both inserts must share a single conn.commit() to satisfy the atomicity requirement.
+**Prompt**
+>"我 execute_booking 是需要寫什麼？" (with the current implementation shown, which contained no payment insert)
+**Outcome**
+>The AI explained that atomicity requires both the bookings INSERT and the payments INSERT to complete together or roll back together — if only the booking commits and the payment fails, the financial record becomes inconsistent. It provided the missing payments INSERT code and showed the correct placement of a single conn.commit() after both inserts. During integration we also discovered the code had accidentally included two conn.commit() calls. The AI identified this as a bug — calling commit twice raises a psycopg2 error on the second call — and instructed us to remove the duplicate.
 
-**Outcome:**
-AI 指出連線被拒絕（Connection Refused）的根本原因並非網路介面故障，而是因為綱要結構檔（schema.sql）最末端的 CREATE INDEX IF NOT EXISTS ON 語法缺少了明確的索引名稱，導致 PostgreSQL 引擎在 Docker 背景進行初始化時引發語法解析錯誤並當場終止運行（Exited）。在 AI 的協助下，小組將該行語法修正為具名索引 idx_policy_embedding，使資料庫容器順利進入 Up (healthy) 狀態，成功恢復 host 監聽通道。
---
-**2.**
-**Context :**
-在資料庫容器正常運作後，小組仍需精準對齊本機端（Host）與 Docker 容器內部（Container）的網路通訊埠，並確認大語言模型（LLM）微調工具鏈是否需要引入外部 API 憑證（API Key）。
+**Example 4 — Debugging: Neo4j Node Label Discrepancy**
+**Context**
+>After implementing the Neo4j seeder, we asked the AI to evaluate the graph design against the Task 4 and Task 5 assessment criteria by reviewing seed_neo4j.py and graph/queries.py together.
+**Prompt**
+>I provided both files and asked the AI to check whether the node labels, relationship types, and properties satisfied the rubric requirements for full marks.
+**Outcome**
+>The AI identified that the seeder used the label RailStation rather than NationalRailStation. This was a consequential bug — any TA test query written as MATCH (n:NationalRailStation) would return empty results, causing mark deductions across Task 4 and Task 5. The AI also identified two functional issues in the query functions: the query_alternative_routes WHERE clause contained a redundant condition that partially neutralised the station-avoidance filter, and query_delay_ripple used *1..{hops} which returns nothing when hops=0 rather than returning the delayed station itself. Corrected Cypher and a Python early-return pattern for the hops=0 edge case were provided and applied.
 
-**Prompt :**
-
-「這是我的.env還是其實問題出在這裡嗎？ 我需要給他我的api key？ 還是其他原因... 這裡是我的config.py... 還是錯啊」
-
-**Outcome:**
-AI 協助小組校對了 docker-compose.yml 檔案中的埠號映射宣告 "- 5433:5432"。說明該語法代表 PostgreSQL 實體於容器內監聽 5432，但對 Mac 本機暴露的通訊大門為 5433。小組據此將 .env 內的 PG_PORT 參數統一修正為 5433 進行精確對齊。同時確認因專案配置 LLM_PROVIDER=ollama，其編排架構完全採用本地端（Local LLM）離線模型（Llama3.2），因此無須配置任何外部 Gemini 雲端憑證，成功精簡了環境配置。
---
-**3.**
-**Context :**
-在進行交易 Ledger 資料灌錄時，系統在 payments 與 feedback 的執行邊界觸發了 ForeignKeyViolation 錯誤，提示：DETAIL: Key (booking_id)=(MT001) is not present in table "bookings"。經小組結構化分析，發現 Mock 資料源 payments.json 具有多型態（Polymorphic）特徵：其包含國鐵訂單（BK-）與地鐵乘車歷史（MT-）。然而原始 Schema 將 booking_id 設為非空（NOT NULL）且僅單向關聯至國鐵表，導致地鐵流水帳無法相容。在嘗試修正時，AI 給出了錯誤的 schema 變更指令。
-
-**Prompt :**
-
-AI 的錯誤指示： AI 漏掉了我們尚未執行 seed_users 與 seed_metro_travels 的系統狀態，便直接要求小組在 Terminal 執行 ALTER TABLE payments ADD COLUMN trip_id ...，此舉因未解除原本的非空約束，導致系統拋出欄位已存在的衝突報錯。
-小組的糾正 Prompt： 「沒有成功耶，一樣是沒有顯示 not null。妳給的語法有問題，因為原本的表有 NOT NULL 限制，而且妳完全漏掉了 seed_postgres.py 裡面一開始連 seed_users 和 seed_metro_travels 都沒被執行到的 Bug！請幫我把 booking_id 的 NOT NULL 移除，並將 trip_id 設為外鍵關聯至地鐵歷史表，最後加上一個兩者互斥、剛好只能有一個來源為真的 CHECK 約束！」
-
-**Outcome:**
-I 被小組精準的資料庫邏輯糾正後，承認其未妥善處理 Polymorphic 重構的非空鎖定狀態。AI 重新為小組設計了具備強大防禦性的 Schema 重構語法：將 booking_id 變更為 DROP NOT NULL，追加 trip_id 外鍵，並實作檢查約束：CONSTRAINT chk_payments_single_source CHECK ((booking_id IS NOT NULL)::int + (trip_id IS NOT NULL)::int = 1)。在小組同步補齊 Python 端的資料流載入邏輯並重置磁區後，腳本順利通過交易邊界檢查，輸出 Database seeded successfully into 3NF schema. 的大功告成標誌。
---
-
-**4.**
-**Context :**
-當本地端 Schema 修正完畢且 Seeding 通過後，小組欲執行 git pull 同步上游倉庫。然而因多人在不同分支同時提交（Commit）了資料庫腳本，導致 Git 觸發了非快速向前（Non-fast-forward）保護機制，本地端終端機被強制鎖定於背景進行自動合併的 Vim 編輯器介面中，開發進度受阻。
-
-**Prompt :**
-
-「Merge branch 'main' of https://github.com/ash-eeee/team5 ... Lines starting with '#' will be ignored, and an empty message aborts the commit. ~ ~ ~ 現在長這樣」
-
-**Outcome:**
-AI 指出此畫面為 Git 核心機制要求開發者確認合併日誌之標準安全行為。AI 引導小組利用非可視化退出指令：先按下 Esc 鍵確保退出編輯狀態，隨後輸入命令 :wq（寫入並退出）按下 Enter 鍵。小組成功解鎖終端機控制權，並藉由下達 git config pull.rebase false 設定團隊預設之合併策略，將組員的代碼資產與圖片完美融合進 MacBook 本地端中，達成了高效的分佈式團隊同步。
+**Example 5 — Debugging: Schema Migration Not Applied to Running Container**
+**Context**
+>After modifying schema.sql to add the code column to national_rail_seat_layouts, the seed script continued to fail with column "code" of relation "national_rail_seat_layouts" does not exist, even though the column was visibly present in the updated SQL file.
+**Prompt**
+>"有嘗試把 schema 改成... 但是 terminal 跑出的東西跟上面一樣" (showing the updated CREATE TABLE statement alongside the same error)
+**Outcome**
+>The AI identified that editing the .sql file does not automatically update a running PostgreSQL container — the Docker volume retains the old schema until explicitly recreated. The correct fix was docker-compose down -v && docker-compose up -d, where the -v flag destroys the persistent volume and forces re-initialisation from the updated schema file. Without -v, the container restarts but the old schema remains on disk. The AI also noted that the code column required a UNIQUE constraint to support the ON CONFLICT (code) DO NOTHING idempotency check already present in seed_seat_layouts() — adding the column without the constraint would have caused a second error on re-run.
 
 ---
 
 ## Section 6 — Reflection & Trade-offs · /5
-
-| Criterion | What earns full marks |
-|-----------|-----------------------|
-| Identifies at least two specific design decisions and explains the reasoning behind each | Two decisions named with clear reasoning — not vague ("we thought it was better"), but specific (e.g., "we chose SERIAL over UUID because our system is single-region and integer joins are faster") |
-| Discusses one aspect that would be different in a production system | Names a concrete production concern (schema migrations, connection pooling, secret management, indexing strategy, etc.) and explains why it would need to change |
-| **Section 6 Total** | |
-
-**Design decisions scoring (3 marks):** Two specific decisions with clear reasoning = 3 ·
-**Design decisions scoring:** Two specific decisions with clear reasoning = 3 · Vague decisions without reasoning = 1–2 · Missing = 0
-
-**Production difference scoring:** Identifies a concrete production concern with explanation = 2 · Mentions something production-related without depth = 1 · Missing = 0
-
 (一)
 決策一 : 主鍵策略（PostgreSQL）
 我們採用三層式主鍵設計而非統一使用單一型別。靜態參考表（如 metro_stations、national_rail_schedules）使用 SERIAL 整數主鍵，原因是這些表不對外暴露，且被大量 JOIN 操作引用——整數主鍵可縮小索引體積並提升 B-tree 叢集效能。敏感交易表（registered_users、bookings、payments）則改用 UUID，透過 pgcrypto 的 gen_random_uuid() 產生，以防止連續 ID 列舉攻擊並遮蔽業務量。主目錄表（ticket_types、refund_policies）使用 VARCHAR 自然鍵，因為交通主管機關本身就提供官方字串代碼（如 'RF001'、'single'）作為標準識別碼，額外加入代理鍵反而多餘且會破壞應用程式邏輯中的直接引用。
 
-決策二 — Neo4j 雙向關係建模
+決策二：— Neo4j 雙向關係建模
 我們選擇對每條實體路段明確建立兩條有向關係（A→B 與 B→A），而非使用無向邊。Neo4j 的 Cypher 路徑演算法（如 shortestPath、gds.shortestPath.dijkstra）預設只走有向邊，若採用無向模型則每次查詢時都需要額外處理關係反向，增加複雜度。在 seed 階段就將雙向關係實體化後，最短路徑與票價計算查詢可以保持簡潔一致，不需額外的執行期開銷。代價是關係數量加倍，但對規模有限的交通網路而言影響微乎其微，換來的查詢簡潔性遠大於此成本。
 
 (二)
